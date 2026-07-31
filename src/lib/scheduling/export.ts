@@ -1,5 +1,5 @@
 import type { Workbook, Worksheet } from "exceljs";
-import { isGeneratedSheet } from "./parse";
+import { isGeneratedSheet, loadExcelJS } from "./parse";
 import type { CellStatus, ScheduleResult } from "./types";
 import { collapseDataValidations } from "./validation";
 
@@ -59,7 +59,7 @@ export async function buildExport(
   result: ScheduleResult,
   originalFile?: ArrayBuffer,
 ): Promise<Blob> {
-  const ExcelJS = (await import("exceljs")).default;
+  const ExcelJS = await loadExcelJS();
   let workbook: Workbook;
 
   if (originalFile) {

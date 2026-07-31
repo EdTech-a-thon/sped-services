@@ -223,11 +223,38 @@ function readServiceSheet(
 /** A problem worth showing to a teacher verbatim, unlike a library stack trace. */
 export class WorkbookError extends Error {}
 
+// The library ships as a CommonJS export, so its shape comes from the import
+// itself rather than from `typeof import("exceljs")`.
+async function importExcelJS() {
+  return (await import("exceljs")).default;
+}
+
+type ExcelJS = Awaited<ReturnType<typeof importExcelJS>>;
+
+let excelJS: Promise<ExcelJS> | null = null;
+
+/**
+ * ExcelJS is big, so it ships as its own chunk rather than blocking the page.
+ * The schedule page starts this download as soon as it opens and the service
+ * worker keeps the chunk cached, so dropping a workbook after the wifi has gone
+ * still reaches the parser. If it genuinely never arrived, say so plainly
+ * instead of letting it surface as "that file could not be read".
+ */
+export function loadExcelJS(): Promise<ExcelJS> {
+  excelJS ??= importExcelJS().catch(() => {
+    excelJS = null; // Let a later attempt retry once there is a connection.
+    throw new WorkbookError(
+      "The spreadsheet reader has not finished downloading, so this workbook could not be opened. Connect to the internet once and reload this page — after that it keeps working offline.",
+    );
+  });
+  return excelJS;
+}
+
 export async function parseWorkbook(
   file: File | Blob,
   fileName: string,
 ): Promise<SchedulerInput> {
-  const ExcelJS = (await import("exceljs")).default;
+  const ExcelJS = await loadExcelJS();
   const workbook = new ExcelJS.Workbook();
   try {
     await workbook.xlsx.load(await file.arrayBuffer());

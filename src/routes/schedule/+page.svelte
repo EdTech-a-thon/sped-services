@@ -4,7 +4,11 @@
   import ScheduleGrid from "$lib/components/ScheduleGrid.svelte";
   import { buildSchedule, defaultSettings } from "$lib/scheduling/build";
   import { buildExport, exportFileName } from "$lib/scheduling/export";
-  import { parseWorkbook, WorkbookError } from "$lib/scheduling/parse";
+  import {
+    loadExcelJS,
+    parseWorkbook,
+    WorkbookError,
+  } from "$lib/scheduling/parse";
   import {
     clearStorage,
     loadSettings,
@@ -35,6 +39,7 @@
   let busy = $state(false);
   let dragging = $state(false);
   let restored = $state(false);
+  let offlineReady = $state(false);
   let fileInput: HTMLInputElement | null = $state(null);
 
   const result = $derived(input ? buildSchedule(input, settings) : null);
@@ -96,8 +101,11 @@
       link.download = exportFileName(input.fileName);
       link.click();
       URL.revokeObjectURL(url);
-    } catch {
-      errorMessage = "The workbook could not be exported. Try re-uploading it.";
+    } catch (error) {
+      errorMessage =
+        error instanceof WorkbookError
+          ? error.message
+          : "The workbook could not be exported. Try re-uploading it.";
     } finally {
       busy = false;
     }
@@ -122,6 +130,14 @@
   });
 
   onMount(() => {
+    // Pull the spreadsheet reader down now, while there is probably still a
+    // connection, rather than at the moment a workbook is dropped.
+    void loadExcelJS().catch(() => {});
+
+    if (navigator.serviceWorker) {
+      void navigator.serviceWorker.ready.then(() => (offlineReady = true));
+    }
+
     const stored = loadWorkbook();
     if (stored) void readFile(stored.bytes, stored.fileName, true);
   });
@@ -142,6 +158,12 @@
     pulled for services. Everything runs in this browser tab — your file is
     never uploaded anywhere.
   </p>
+
+  {#if offlineReady}
+    <p class="mt-2 text-sm text-slate-500">
+      This page is saved on this computer and keeps working without internet.
+    </p>
+  {/if}
 
   {#if errorMessage}
     <p
