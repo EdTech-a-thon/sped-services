@@ -1,1 +1,6 @@
 @import "tailwindcss";
+
+.handwriting {
+  font-family:
+    "Segoe Script", "Bradley Hand", "Snell Roundhand", "Comic Sans MS", cursive;
+}
