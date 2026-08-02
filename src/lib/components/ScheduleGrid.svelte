@@ -19,7 +19,12 @@
   };
 </script>
 
-<div class="max-h-[70vh] overflow-auto rounded-lg border border-slate-200">
+<!-- `relative` matters: the screen-reader-only spans in the cells are absolutely
+     positioned, and without a positioned ancestor here they escape this box and
+     stretch the whole page's scroll area to the width of the table. -->
+<div
+  class="relative max-h-[70vh] overflow-auto rounded-lg border border-slate-200"
+>
   <table class="w-max border-collapse text-sm">
     <thead>
       <tr>

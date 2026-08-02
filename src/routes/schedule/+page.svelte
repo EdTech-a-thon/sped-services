@@ -25,7 +25,7 @@
     type SchedulerInput,
   } from "$lib/scheduling/types";
 
-  const SLOT_CHOICES = [10, 15, 20, 30, 60];
+  const SLOT_CHOICES = [5, 10, 15, 20, 30, 45, 60];
 
   let input = $state<SchedulerInput | null>(null);
   let fileBytes = $state<ArrayBuffer | null>(null);
