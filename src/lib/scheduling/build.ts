@@ -2,12 +2,14 @@ import { normalizeKey } from "./parse";
 import { formatRange } from "./time";
 import {
   DAYS,
+  type ClassBlock,
   type DayGrid,
   type GridCell,
   type GridSettings,
   type GridSlot,
   type ScheduleResult,
   type SchedulerInput,
+  type ServiceSession,
 } from "./types";
 
 const DEFAULT_START = 7 * 60 + 30; // 7:30 AM
@@ -68,6 +70,63 @@ function buildSlots(settings: GridSettings): GridSlot[] {
   return slots;
 }
 
+/** Anything overlapping a row, in time order, joined as "reading - math". */
+function joinLabels(items: { start: number; label: string }[]): string {
+  const labels: string[] = [];
+  for (const item of [...items].sort((a, b) => a.start - b.start)) {
+    const label = item.label.trim();
+    if (label && !labels.includes(label)) labels.push(label);
+  }
+  return labels.join(" - ");
+}
+
+/**
+ * Build one cell from everything that overlaps the row. Rows longer than the
+ * blocks underneath them show the most restrictive thing happening, so a long
+ * row never looks free when part of it is not: a booking or a block the class
+ * cannot be pulled from takes the whole row, named as the reason why. Only when
+ * the entire row is pullable does it list the activities it spans.
+ */
+function buildCell(
+  slot: GridSlot,
+  sessions: ServiceSession[],
+  blocks: ClassBlock[],
+): GridCell {
+  const overlaps = (item: { start: number; end: number }) =>
+    item.start < slot.end && item.end > slot.start;
+
+  const booked = sessions.filter(overlaps);
+  const blocked = blocks
+    .filter((block) => !block.servicePossible)
+    .filter(overlaps);
+
+  if (booked.length || blocked.length) {
+    return {
+      label: joinLabels([
+        ...booked.map((session) => ({
+          start: session.start,
+          label: session.service,
+        })),
+        ...blocked.map((block) => ({
+          start: block.start,
+          label: block.subject,
+        })),
+      ]),
+      status: booked.length ? "booked" : "unavailable",
+    };
+  }
+
+  const available = blocks.filter(overlaps);
+  if (!available.length) return { label: "", status: "empty" };
+
+  return {
+    label: joinLabels(
+      available.map((block) => ({ start: block.start, label: block.subject })),
+    ),
+    status: "available",
+  };
+}
+
 /**
  * Build the five day grids. A cell shows the service a student is already
  * booked into, otherwise whatever their class is doing — coloured by whether
@@ -95,24 +154,10 @@ export function buildSchedule(
 
     const rows = slots.map((slot) =>
       input.students.map((student, index): GridCell => {
-        const booked = sessions.find(
-          (session) =>
-            normalizeKey(session.student) === studentKeys[index] &&
-            session.start <= slot.start &&
-            session.end > slot.start,
+        const booked = sessions.filter(
+          (session) => normalizeKey(session.student) === studentKeys[index],
         );
-        if (booked) return { label: booked.service, status: "booked" };
-
-        const block = (input.classes[student.classKey] ?? []).find(
-          (candidate) =>
-            candidate.start <= slot.start && candidate.end > slot.start,
-        );
-        if (!block) return { label: "", status: "empty" };
-
-        return {
-          label: block.subject,
-          status: block.servicePossible ? "available" : "unavailable",
-        };
+        return buildCell(slot, booked, input.classes[student.classKey] ?? []);
       }),
     );
 
