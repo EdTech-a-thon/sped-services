@@ -1,7 +1,13 @@
 import { normalizeKey } from "./parse";
+import {
+  buildEligibility,
+  isPullable,
+  type EligibilityIndex,
+} from "./permissions";
 import { formatRange } from "./time";
 import {
   DAYS,
+  emptyClassSchedule,
   type ClassBlock,
   type DayGrid,
   type GridCell,
@@ -24,10 +30,12 @@ export function defaultSettings(input: SchedulerInput): GridSettings {
   const starts: number[] = [];
   const ends: number[] = [];
 
-  for (const blocks of Object.values(input.classes)) {
-    for (const block of blocks) {
-      starts.push(block.start);
-      ends.push(block.end);
+  for (const schedule of Object.values(input.classes)) {
+    for (const day of DAYS) {
+      for (const block of schedule[day]) {
+        starts.push(block.start);
+        ends.push(block.end);
+      }
     }
   }
   for (const session of input.services) {
@@ -91,13 +99,14 @@ function buildCell(
   slot: GridSlot,
   sessions: ServiceSession[],
   blocks: ClassBlock[],
+  eligibility: EligibilityIndex,
 ): GridCell {
   const overlaps = (item: { start: number; end: number }) =>
     item.start < slot.end && item.end > slot.start;
 
   const booked = sessions.filter(overlaps);
   const blocked = blocks
-    .filter((block) => !block.servicePossible)
+    .filter((block) => !isPullable(block, eligibility))
     .filter(overlaps);
 
   if (booked.length || blocked.length) {
@@ -148,6 +157,7 @@ export function buildSchedule(
   const studentKeys = input.students.map((student) =>
     normalizeKey(student.name),
   );
+  const eligibility = buildEligibility(input.serviceMatches);
 
   const grids: DayGrid[] = DAYS.map((day) => {
     const sessions = sessionsByDay.get(day) ?? [];
@@ -157,7 +167,9 @@ export function buildSchedule(
         const booked = sessions.filter(
           (session) => normalizeKey(session.student) === studentKeys[index],
         );
-        return buildCell(slot, booked, input.classes[student.classKey] ?? []);
+        const schedule =
+          input.classes[student.classKey] ?? emptyClassSchedule();
+        return buildCell(slot, booked, schedule[day], eligibility);
       }),
     );
 

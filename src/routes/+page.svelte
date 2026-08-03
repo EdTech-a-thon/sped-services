@@ -27,6 +27,12 @@
         Upload a workbook
       </a>
       <a
+        href={resolve("/plan")}
+        class="rounded-lg border border-green-800 bg-white px-6 py-3 font-medium text-green-900 hover:bg-green-50"
+      >
+        Plan a provider's week
+      </a>
+      <a
         href={asset(TEMPLATE_PATH)}
         download={TEMPLATE_FILE_NAME}
         class="rounded-lg border border-slate-300 bg-white px-6 py-3 font-medium text-slate-700 hover:bg-slate-50"
