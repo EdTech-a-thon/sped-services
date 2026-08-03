@@ -1,13 +1,25 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
+import {
+  buildCandidatePool,
+  checkCompatibility,
+  findPartners,
+  isCompatible,
+  previewGroup,
+} from "./explain";
 import { normalizeKey, parseWorkbook, tokenizeSubjects } from "./parse";
 import { buildEligibility, canServe } from "./permissions";
 import { buildPlan } from "./plan";
 import { buildWeekWindows, buildWindowContext } from "./windows";
-import { DAYS, type ClassBlock, type ServiceRequirement } from "./types";
+import {
+  DAYS,
+  type Candidate,
+  type ClassBlock,
+  type RuleSettings,
+  type ServiceRequirement,
+} from "./types";
 
-const WORKBOOK =
-  "Service Scheduler Template - Subject-level Service Permissions.xlsx";
+const WORKBOOK = "Service Scheduler Template.xlsx";
 
 const input = await parseWorkbook(
   new Blob([await readFile(WORKBOOK)]),
@@ -110,7 +122,6 @@ describe("eligibility", () => {
     paraSupports: false,
     model,
     groupType: "Small Group",
-    canCombine: true,
   });
 
   const allows = (service: string, subject: string) =>
@@ -153,10 +164,10 @@ describe("windows", () => {
 
   test("adjacent eligible blocks merge into one longer window", () => {
     // Behavior may displace both Cafeteria (7:30-8:00) and Morning Meeting
-    // (8:00-8:30). Alex needs 45 minutes, which only fits once the two are
-    // treated as the single hour they actually are.
+    // (8:00-8:30). Treated separately they are two half-hours; merged they are
+    // the single hour they actually are, which is what lets a session longer
+    // than either block fit.
     const requirement = find("Alex", "Behavior");
-    expect(requirement.sessionLength).toBe(45);
 
     const { windows } = buildWeekWindows(requirement, context);
     const morning = windows.find(
@@ -268,6 +279,150 @@ describe("plan", () => {
   test("every shortfall carries a reason", () => {
     for (const row of plan.unplaced) {
       expect(Object.keys(row.reasons).length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("explaining who may group with whom", () => {
+  const plan = buildPlan(input, "Panzer");
+  const settings = plan.settings;
+  const pool = buildCandidatePool(input);
+
+  const pick = (student: string, service: string) => {
+    const candidate = pool.find(
+      (entry) =>
+        entry.student.name === student && entry.requirement.service === service,
+    );
+    if (!candidate) throw new Error(`no ${service} row for ${student}`);
+    return candidate;
+  };
+
+  const checkFor = (
+    group: Candidate[],
+    candidate: Candidate,
+    label: string,
+    overrides?: Partial<RuleSettings>,
+  ) => {
+    const check = checkCompatibility(group, candidate, {
+      ...settings,
+      ...overrides,
+    }).find((entry) => entry.label === label);
+    if (!check) throw new Error(`no "${label}" check`);
+    return check;
+  };
+
+  // The whole point of the explanation is that it cannot drift from the
+  // behaviour: every group the planner actually built must survive the checks
+  // the UI shows, member by member.
+  test("the checks agree with every group the planner built", () => {
+    for (const group of plan.groups) {
+      const members = group.members.map((member) =>
+        pick(member, group.service),
+      );
+      for (let i = 1; i < members.length; i++) {
+        const checks = checkCompatibility(
+          members.slice(0, i),
+          members[i],
+          settings,
+        );
+        expect(checks.filter((check) => check.status === "fail")).toEqual([]);
+      }
+    }
+  });
+
+  test("two students one grade apart with the same session length may group", () => {
+    // Alex and Eloise both need 30-minute Behavior and are one grade apart, so
+    // every rule that could separate them passes.
+    const alex = pick("Alex", "Behavior");
+    const eloise = pick("Eloise", "Behavior");
+
+    expect(checkFor([alex], eloise, "Grade span").status).toBe("pass");
+    expect(checkFor([alex], eloise, "Session length span").status).toBe("pass");
+    expect(checkFor([alex], eloise, "Shared free time").status).toBe("pass");
+    expect(isCompatible([alex], eloise, settings)).toBe(true);
+  });
+
+  test("a grade-span block names the knob that would unblock it", () => {
+    const eloise = pick("Eloise", "Behavior"); // 1 Clayton
+    const bennett = pick("Bennett", "Behavior"); // 3 Harris
+
+    const blocked = checkFor([eloise], bennett, "Grade span");
+    expect(blocked.status).toBe("fail");
+    expect(blocked.setting).toBe("gradeDeltaGenEd");
+    expect(blocked.rule).toBe(3);
+    expect(isCompatible([eloise], bennett, settings)).toBe(false);
+
+    // Widening exactly that knob is enough; nothing else was in the way.
+    const loosened = { gradeDeltaGenEd: 2 };
+    expect(checkFor([eloise], bennett, "Grade span", loosened).status).toBe(
+      "pass",
+    );
+    expect(isCompatible([eloise], bennett, { ...settings, ...loosened })).toBe(
+      true,
+    );
+  });
+
+  test("whole-group services report the small-group limits as not applying", () => {
+    const caroline = pick("Caroline", "Reading MTSS"); // 3 Harris, Whole Group
+    const hannah = pick("Hannah", "Reading MTSS"); // 2 Pryor
+
+    for (const label of ["Group size", "Session length span", "Grade span"]) {
+      expect(checkFor([caroline], hannah, label).status).toBe("n/a");
+    }
+    expect(checkFor([caroline], hannah, "Shared free time").status).toBe(
+      "pass",
+    );
+  });
+
+  test("a partner list explains everyone, eligible or not", () => {
+    const alex = pick("Alex", "Behavior");
+    const partners = findPartners(alex, [], pool, settings);
+
+    // Everyone else prescribed Behavior appears, nobody silently dropped.
+    expect(partners.map((partner) => partner.candidate.student.name).sort()) //
+      .toEqual(["Bennett", "Eloise", "Franklin", "Lola"]);
+    for (const partner of partners) {
+      expect(partner.eligible).toBe(partner.blockers.length === 0);
+      for (const blocker of partner.blockers) {
+        expect(blocker.detail).not.toBe("");
+      }
+    }
+  });
+
+  test("adding a partner never widens the group's usable time", () => {
+    const eloise = pick("Eloise", "Behavior");
+    const lola = pick("Lola", "Behavior");
+
+    const alone = previewGroup(eloise, []);
+    const paired = previewGroup(eloise, [lola]);
+
+    expect(paired.sharedWindows.length).toBeLessThanOrEqual(
+      alone.sharedWindows.length,
+    );
+    // And what is left is genuinely time Eloise was already free for.
+    for (const window of paired.sharedWindows) {
+      expect(
+        alone.ownWindows.some(
+          (own) =>
+            own.day === window.day &&
+            own.start <= window.start &&
+            own.end >= window.end,
+        ),
+      ).toBe(true);
+    }
+  });
+
+  test("a previewed window is always long enough to hold the session", () => {
+    const preview = previewGroup(pick("Kate", "Writing"), [
+      pick("Jackie", "Writing"),
+    ]);
+    for (const window of preview.sharedWindows) {
+      expect(window.end - window.start).toBeGreaterThanOrEqual(
+        preview.sessionLength,
+      );
+    }
+    for (const window of preview.tooShort) {
+      expect(window.end - window.start).toBeLessThan(preview.sessionLength);
     }
   });
 });

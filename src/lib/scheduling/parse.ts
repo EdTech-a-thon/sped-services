@@ -490,7 +490,6 @@ function readMinutes(
   const paraSupportCol = findColumn(columns, ["Para Supports"], 8);
   const modelCol = findColumn(columns, ["Service Model"], 9);
   const groupCol = findColumn(columns, ["Group Type"], 10);
-  const combineCol = findColumn(columns, ["Can Combine?"], 11);
 
   const requirements: ServiceRequirement[] = [];
   for (let row = 2; row <= sheet.rowCount; row++) {
@@ -525,7 +524,6 @@ function readMinutes(
       groupType: (/whole/i.test(groupType)
         ? "Whole Group"
         : "Small Group") as GroupType,
-      canCombine: isTruthy(cellValue(sheet, row, combineCol)),
     });
   }
   return requirements;

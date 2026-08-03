@@ -1,3 +1,4 @@
+import { isCompatible } from "./explain";
 import { normalizeKey } from "./parse";
 import {
   buildWeekWindows,
@@ -5,22 +6,14 @@ import {
   type WindowContext,
 } from "./windows";
 import type {
+  Candidate,
   Group,
   RuleSettings,
   ServiceRequirement,
-  Student,
-  UnplacedReason,
   Window,
 } from "./types";
 
-/** A requirement plus everything grouping needs to reason about it. */
-export interface Candidate {
-  requirement: ServiceRequirement;
-  student: Student;
-  windows: Window[];
-  /** Set when there were no windows at all, so the plan can explain why. */
-  reason: UnplacedReason | null;
-}
+export type { Candidate };
 
 function partitionKey(requirement: ServiceRequirement): string {
   // Reading MTSS is prescribed as both Small Group and Whole Group, so the
@@ -34,49 +27,6 @@ function totalMinutes(windows: Window[]): number {
 
 function distinctDays(windows: Window[]): number {
   return new Set(windows.map((window) => window.day)).size;
-}
-
-/**
- * Can this candidate join this group? Whole-group services skip the grade and
- * length limits — rule 7's "max of four" is about small groups, and an MTSS
- * block is deliberately the whole caseload at once. What both kinds still need
- * is somewhere they can all actually meet.
- */
-function compatible(
-  group: Candidate[],
-  candidate: Candidate,
-  settings: RuleSettings,
-): boolean {
-  const isWholeGroup = candidate.requirement.groupType === "Whole Group";
-
-  if (!isWholeGroup) {
-    if (group.length >= settings.maxGroupSize) return false;
-    if (!candidate.requirement.canCombine) return false;
-    if (group.some((member) => !member.requirement.canCombine)) return false;
-
-    const lengths = [
-      ...group.map((member) => member.requirement.sessionLength),
-      candidate.requirement.sessionLength,
-    ];
-    if (
-      Math.max(...lengths) - Math.min(...lengths) >
-      settings.sessionLengthDelta
-    ) {
-      return false;
-    }
-
-    const grades = [...group, candidate]
-      .map((member) => member.student.grade)
-      .filter((grade): grade is number => grade != null);
-    if (
-      grades.length &&
-      Math.max(...grades) - Math.min(...grades) > settings.gradeDeltaGenEd
-    ) {
-      return false;
-    }
-  }
-
-  return true;
 }
 
 /**
@@ -160,7 +110,7 @@ export function buildGroups(
     for (const candidate of ordered) {
       let best: { group: Candidate[]; score: number } | null = null;
       for (const group of built) {
-        if (!compatible(group, candidate, settings)) continue;
+        if (!isCompatible(group, candidate, settings)) continue;
         const value = score(group, candidate);
         if (value < 0) continue;
         if (!best || value > best.score) best = { group, score: value };

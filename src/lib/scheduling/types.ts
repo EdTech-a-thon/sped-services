@@ -72,7 +72,6 @@ export interface ServiceRequirement {
   paraSupports: boolean;
   model: DeliveryModel;
   groupType: GroupType;
-  canCombine: boolean;
 }
 
 /** One row of the "Service Definitions" sheet. */
@@ -155,6 +154,20 @@ export type UnplacedReason =
   | "Provider already busy"
   | "Provider minute cap reached"
   | "Student already receiving another service";
+
+/**
+ * A requirement plus everything grouping needs to reason about it: who the
+ * student is and when they are actually free. Lives here rather than in
+ * `group.ts` so the planner and the explainer can both take one without
+ * importing each other.
+ */
+export interface Candidate {
+  requirement: ServiceRequirement;
+  student: Student;
+  windows: Window[];
+  /** Set when there were no windows at all, so the plan can explain why. */
+  reason: UnplacedReason | null;
+}
 
 /** Students who share a service, a session length and enough free time. */
 export interface Group {

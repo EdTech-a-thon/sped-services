@@ -24,8 +24,7 @@ import {
 } from "../src/lib/scheduling/validation";
 import { DAYS } from "../src/lib/scheduling/types";
 
-const SOURCE =
-  "Service Scheduler Template - Subject-level Service Permissions.xlsx";
+const SOURCE = "Service Scheduler Template.xlsx";
 const TARGET = "static/service-scheduler-template.xlsx";
 
 /**
