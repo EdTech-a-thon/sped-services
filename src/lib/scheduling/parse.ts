@@ -1,12 +1,13 @@
 import type { Worksheet } from "exceljs";
 import { toMinutes } from "./time";
-import { readRuleOverrides } from "./rules";
+import { isRuleSectionHeading, readRuleOverrides } from "./rules";
 import {
   DAYS,
   emptyClassSchedule,
   type ClassSchedule,
   type DeliveryModel,
   type GroupType,
+  type RuleRow,
   type SchedulerInput,
   type ServiceDefinition,
   type ServiceMatch,
@@ -485,7 +486,19 @@ function readMinutes(
     ["Sessions Needed/Week", "Sessions Needed"],
     5,
   );
-  const providerCol = findColumn(columns, ["Provider(s)", "Provider"], 6);
+  // Newer workbooks split the old "Provider(s)" column in two: the provider who
+  // owns the prescription, and everyone who may cover a session for them. Both
+  // resolve to the same column on a workbook that only has the old one.
+  const providerCol = findColumn(
+    columns,
+    ["Lead Provider", "Provider(s)", "Provider"],
+    6,
+  );
+  const alternateCol = optionalColumn(columns, [
+    "Alternate Provider(s)",
+    "Alternate Providers",
+    "Alternate Provider",
+  ]);
   const paraLeadCol = findColumn(columns, ["Can Para Lead?"], 7);
   const paraSupportCol = findColumn(columns, ["Para Supports"], 8);
   const modelCol = findColumn(columns, ["Service Model"], 9);
@@ -511,13 +524,31 @@ function readMinutes(
     }
 
     const groupType = cellText(sheet, row, groupCol);
+    // On the old layout this column holds the whole list, so the first name is
+    // the lead and the rest are its alternates.
+    const named = splitList(cellText(sheet, row, providerCol));
+    const alternates = alternateCol
+      ? splitList(cellText(sheet, row, alternateCol))
+      : named.slice(1);
+    const leadProvider = named[0] ?? "";
+    // The sheet sometimes repeats the lead among its own alternates.
+    const providers = [
+      ...new Map(
+        [leadProvider, ...alternates]
+          .filter(Boolean)
+          .map((name) => [normalizeKey(name), name]),
+      ).values(),
+    ];
+
     requirements.push({
       student,
       service,
       minutesPerWeek: toNumber(cellValue(sheet, row, weekCol)) ?? 0,
       sessionLength,
       sessionsPerWeek,
-      providers: splitList(cellText(sheet, row, providerCol)),
+      providers,
+      leadProvider,
+      alternateProviders: providers.slice(1),
       canParaLead: isTruthy(cellValue(sheet, row, paraLeadCol)),
       paraSupports: isTruthy(cellValue(sheet, row, paraSupportCol)),
       model: readModel(cellText(sheet, row, modelCol)),
@@ -565,6 +596,34 @@ function readServiceMatches(
     matches.push({ service, model, subjects: matched });
   }
   return matches;
+}
+
+/**
+ * Pull the Rules sheet out row by row. The section headings ("Staff Rule",
+ * "Instruction Rule", "Compliance Rule") share column 2 with the rules
+ * themselves and simply have nothing beside them.
+ */
+function readRuleRows(sheet: Worksheet): RuleRow[] {
+  const rows: RuleRow[] = [];
+  let section = "";
+
+  for (let row = 1; row <= sheet.rowCount; row++) {
+    const text = cellText(sheet, row, 2);
+    if (!text) continue;
+    if (isRuleSectionHeading(text)) {
+      section = text;
+      continue;
+    }
+    rows.push({
+      row,
+      section,
+      hardness: cellText(sheet, row, 1),
+      text,
+      value: cellText(sheet, row, 3),
+    });
+  }
+
+  return rows;
 }
 
 function readServiceDefinitions(sheet: Worksheet): ServiceDefinition[] {
@@ -711,6 +770,7 @@ export async function parseWorkbook(
         rulesSheet.rowCount,
       )
     : {};
+  const ruleRows = rulesSheet ? readRuleRows(rulesSheet) : [];
 
   for (const key of [
     "subject",
@@ -773,6 +833,7 @@ export async function parseWorkbook(
     serviceMatches,
     serviceDefinitions,
     ruleOverrides,
+    ruleRows,
     // Deduplicated: the same sentence twice tells a teacher nothing, and the
     // pages key their warning lists by text.
     warnings: [...new Set(warnings)],

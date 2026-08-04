@@ -156,6 +156,22 @@ export function deriveCapacity(
 }
 
 /**
+ * The headings that begin the Staff, Instruction and Compliance blocks. They sit
+ * in column 1, on their own row, and everything below them is out of scope here.
+ */
+export const RULE_SECTION_HEADINGS = [
+  "Staff Rule",
+  "Instruction Rule",
+  "Compliance Rule",
+] as const;
+
+export function isRuleSectionHeading(text: string): boolean {
+  return RULE_SECTION_HEADINGS.some(
+    (heading) => heading.toLowerCase() === text.trim().toLowerCase(),
+  );
+}
+
+/**
  * Pull whatever the Rules sheet actually filled in. Every Value is blank in the
  * current template, so this mostly exists so the sheet can take over later
  * without a code change.
@@ -166,10 +182,18 @@ export function readRuleOverrides(
 ): Partial<RuleSettings> {
   const overrides: Partial<RuleSettings> = {};
 
+  // Some workbooks have no Speech block at all and open straight onto "Staff
+  // Rule". Checking for the heading matters: the parapro rule about groups "in
+  // the General Education classroom" matches the grade-span probe below, so
+  // reading those rows as speech rules quietly sets the grade span to 3.
+  if (cell(1, 2).trim().toLowerCase() !== "speech") return overrides;
+
   for (let row = 2; row <= rowCount; row++) {
     const text = cell(row, 2);
-    // The Speech block ends at the first blank row; "Staff Rule" and the
-    // sections after it are out of scope.
+    // "Staff Rule" and the sections after it share this column with the rules.
+    if (isRuleSectionHeading(text)) break;
+
+    // The Speech block also ends at the first blank row.
     if (!text) break;
 
     const rule = SPEECH_RULES.find((candidate) =>

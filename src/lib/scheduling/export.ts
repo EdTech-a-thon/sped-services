@@ -1,5 +1,6 @@
 import type { Workbook, Worksheet } from "exceljs";
 import { isGeneratedSheet, loadExcelJS, normalizeKey } from "./parse";
+import type { TeamPlanResult } from "./team";
 import { formatRange } from "./time";
 import type {
   CellStatus,
@@ -211,6 +212,180 @@ export async function buildPlanExport(
   return new Blob([bytes], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
+}
+
+const TEAM_REPORT_SHEETS = [
+  ...REPORT_SHEETS,
+  "Staff Coverage",
+  "Rule Violations",
+] as const;
+
+/**
+ * The team plan written back into the teacher's own workbook.
+ *
+ * The same three report sheets as `buildPlanExport`, except that "Provider" is
+ * now the person who actually leads each session rather than a single name for
+ * the whole plan, plus two sheets the single-provider export has no use for:
+ * where everybody's lunch and break landed, and which soft rules had to bend.
+ */
+export async function buildTeamPlanExport(
+  input: SchedulerInput,
+  plan: TeamPlanResult,
+  originalFile?: ArrayBuffer,
+): Promise<Blob> {
+  const ExcelJS = await loadExcelJS();
+  const workbook = new ExcelJS.Workbook();
+
+  if (originalFile) {
+    await workbook.xlsx.load(originalFile);
+    for (const sheet of [...workbook.worksheets]) {
+      if (
+        TEAM_REPORT_SHEETS.some(
+          (name) => normalizeKey(name) === normalizeKey(sheet.name),
+        )
+      ) {
+        workbook.removeWorksheet(sheet.id);
+        continue;
+      }
+      collapseDataValidations(sheet);
+    }
+  } else {
+    workbook.created = new Date();
+  }
+
+  const classOf = new Map(
+    input.students.map((student) => [
+      normalizeKey(student.name),
+      student.className,
+    ]),
+  );
+
+  writeReport(
+    workbook.addWorksheet("Generated Schedule"),
+    [
+      "Day",
+      "Student",
+      "Service",
+      "Provider",
+      "Support",
+      "Classroom",
+      "Time Block",
+      "Subject",
+      "Minutes",
+      "Lead Session?",
+    ],
+    plan.placements.flatMap((placement) =>
+      placement.members.map((member) => [
+        placement.day,
+        member,
+        placement.service,
+        placement.staff,
+        placement.supportStaff.join(", "),
+        classOf.get(normalizeKey(member)) ?? "",
+        formatRange(placement.start, placement.end),
+        placement.subject,
+        placement.end - placement.start,
+        placement.isLeadSession ? "Yes" : "",
+      ]),
+    ),
+  );
+
+  writeReport(
+    workbook.addWorksheet("Conflicts"),
+    [
+      "Student",
+      "Service",
+      "Service Model",
+      "Sessions Short",
+      "Minutes Short",
+      "Reasons",
+    ],
+    plan.unplaced.map((row) => [
+      row.student,
+      row.service,
+      row.model,
+      row.missingSessions,
+      row.missingMinutes,
+      Object.entries(row.reasons)
+        .map(([reason, count]) => `${reason} x${count}`)
+        .join("; "),
+    ]),
+  );
+
+  writeReport(
+    workbook.addWorksheet("Compliance Report"),
+    [
+      "Student",
+      "Service",
+      "Required Minutes",
+      "Scheduled Minutes",
+      "Difference",
+      "Status",
+    ],
+    plan.compliance.map((row) => [
+      row.student,
+      row.service,
+      row.requiredMinutes,
+      row.scheduledMinutes,
+      row.difference,
+      row.status,
+    ]),
+  );
+
+  writeReport(
+    workbook.addWorksheet("Staff Coverage"),
+    ["Staff", "Role", "Day", "Kind", "Time Block", "Minutes", "Note"],
+    [
+      ...plan.coverage.map((event) => [
+        event.staff,
+        plan.staff.find(
+          (member) => normalizeKey(member.name) === normalizeKey(event.staff),
+        )?.role ?? "",
+        event.day,
+        event.kind,
+        formatRange(event.start, event.end),
+        event.end - event.start,
+        event.violates.length ? "Outside the preferred window" : "",
+      ]),
+      ...plan.coverageGaps.map((gap) => [
+        gap.staff,
+        "",
+        gap.day,
+        gap.kind,
+        "not placed",
+        gap.minutes,
+        gap.reason,
+      ]),
+    ],
+  );
+
+  writeReport(
+    workbook.addWorksheet("Rule Violations"),
+    ["Rule", "Summary", "Detail"],
+    [
+      ...plan.violations.map((violation) => [
+        violation.ruleId,
+        violation.summary,
+        violation.detail,
+      ]),
+      ...plan.unmodelledRules.map((text) => [
+        "not modelled",
+        "This rule is not checked by the planner",
+        text,
+      ]),
+    ],
+  );
+
+  const bytes = await workbook.xlsx.writeBuffer();
+  return new Blob([bytes], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+}
+
+/** "Template.xlsx" -> "Template - team plan.xlsx" */
+export function teamPlanFileName(fileName: string): string {
+  const base = fileName.replace(/\.[^.]+$/, "") || "plan";
+  return `${base} - team plan.xlsx`;
 }
 
 /** "Special Ed Scheduling.xlsx" -> "Special Ed Scheduling - schedules.xlsx" */

@@ -61,6 +61,17 @@ function score(group: Candidate[], candidate: Candidate): number {
 }
 
 /**
+ * An extra admission test, for callers with rules the shared checks do not
+ * cover. Team planning uses it for the co-teach classroom and the parapro group
+ * cap; `/plan` passes nothing and behaves exactly as before.
+ */
+export type ExtraCheck = (
+  group: Candidate[],
+  candidate: Candidate,
+  settings: RuleSettings,
+) => boolean;
+
+/**
  * Build the groups for one provider.
  *
  * Grouping and time-finding cannot be separated: two students can match on
@@ -72,6 +83,7 @@ export function buildGroups(
   requirements: ServiceRequirement[],
   context: WindowContext,
   settings: RuleSettings,
+  extraChecks: ExtraCheck[] = [],
 ): { groups: Group[]; unschedulable: Candidate[] } {
   const candidates: Candidate[] = [];
   const unschedulable: Candidate[] = [];
@@ -111,6 +123,9 @@ export function buildGroups(
       let best: { group: Candidate[]; score: number } | null = null;
       for (const group of built) {
         if (!isCompatible(group, candidate, settings)) continue;
+        if (!extraChecks.every((check) => check(group, candidate, settings))) {
+          continue;
+        }
         const value = score(group, candidate);
         if (value < 0) continue;
         if (!best || value > best.score) best = { group, score: value };

@@ -118,6 +118,8 @@ describe("eligibility", () => {
     sessionLength: 30,
     sessionsPerWeek: 2,
     providers: ["Panzer"],
+    leadProvider: "Panzer",
+    alternateProviders: [],
     canParaLead: false,
     paraSupports: false,
     model,

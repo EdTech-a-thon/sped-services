@@ -67,7 +67,15 @@ export interface ServiceRequirement {
   minutesPerWeek: number;
   sessionLength: number;
   sessionsPerWeek: number;
+  /** Everyone who may deliver this: the lead first, then the alternates. */
   providers: string[];
+  /**
+   * The provider who owns this prescription. Newer workbooks name one in its own
+   * column; older ones list everyone together, so the first name stands in.
+   */
+  leadProvider: string;
+  /** Who else may cover a session. Empty on workbooks with no such column. */
+  alternateProviders: string[];
   canParaLead: boolean;
   paraSupports: boolean;
   model: DeliveryModel;
@@ -95,6 +103,24 @@ export interface ServiceMatch {
   service: string;
   model: DeliveryModel;
   subjects: string[];
+}
+
+/**
+ * One row of the Rules sheet, as written. The sheet is prose, and different
+ * parts of the app read different blocks of it, so parsing stops at pulling the
+ * rows out and leaves interpreting them to `rules.ts` and `teamRules.ts`.
+ */
+export interface RuleRow {
+  /** Sheet row number, for cross-referencing. */
+  row: number;
+  /** The heading this row sits under, e.g. "Staff Rule"; "" above the first. */
+  section: string;
+  /** Column 1: "Hard" or "Soft". */
+  hardness: string;
+  /** Column 2: the rule itself. */
+  text: string;
+  /** Column 3, as written — often blank. */
+  value: string;
 }
 
 /** One row of the "Staff" sheet. */
@@ -153,7 +179,12 @@ export type UnplacedReason =
   | "Student already booked with another provider"
   | "Provider already busy"
   | "Provider minute cap reached"
-  | "Student already receiving another service";
+  | "Student already receiving another service"
+  /* Team planning only — a session also has to have someone free to lead it. */
+  | "No qualified staff available"
+  | "Parapro needs the SLC teacher present"
+  | "Lead provider could not meet this group"
+  | "Staff on lunch or break";
 
 /**
  * A requirement plus everything grouping needs to reason about it: who the
@@ -183,6 +214,31 @@ export interface Group {
   sessionsPerWeek: number;
   /** Windows every member is free for, the group's legal times. */
   sharedWindows: Window[];
+}
+
+/**
+ * A staff member's lunch or break, placed on the calendar. The Staff sheet only
+ * gives a duration, so the time of day is the planner's to choose — and once
+ * chosen it blocks that person exactly like a session does.
+ */
+export interface StaffEvent {
+  staff: string;
+  day: Day;
+  kind: "Lunch" | "Break";
+  start: number;
+  end: number;
+  /** Ids of soft rules this placement had to bend, for the report. */
+  violates: string[];
+}
+
+/** Coverage the day had no legal room for. */
+export interface CoverageGap {
+  staff: string;
+  day: Day;
+  kind: "Lunch" | "Break";
+  /** Minutes still owed. */
+  minutes: number;
+  reason: string;
 }
 
 export interface Placement {
@@ -258,6 +314,8 @@ export interface SchedulerInput {
   serviceDefinitions: ServiceDefinition[];
   /** Whatever the Rules sheet filled in; everything else falls back to defaults. */
   ruleOverrides: Partial<RuleSettings>;
+  /** Every row of the Rules sheet, for the readers that want the other blocks. */
+  ruleRows: RuleRow[];
   warnings: string[];
 }
 
