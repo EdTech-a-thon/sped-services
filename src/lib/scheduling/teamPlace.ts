@@ -60,14 +60,6 @@ function overlaps(
   return a.start < end && a.end > start;
 }
 
-function contains(
-  a: { start: number; end: number },
-  start: number,
-  end: number,
-) {
-  return a.start <= start && a.end >= end;
-}
-
 /**
  * Pull-out needs transition time either side, because students walk to the SPED
  * room and back. Push-in that stays in the same classroom does not — nobody
@@ -261,8 +253,10 @@ interface State {
   studentBusy: Map<string, Busy[]>;
   /** Anything at all in the pull-out room, so supervision can be checked. */
   slcRoomBusy: Map<Day, Busy[]>;
-  /** Only the SLC teacher's own pull-out sessions — what supervision requires. */
-  slcTeaching: Map<Day, Busy[]>;
+  /** Parapro-led pull-out, which the SLC teacher may not walk out on. */
+  paraPullOut: Map<Day, Busy[]>;
+  /** The SLC teacher, if this workbook has one. */
+  slc: StaffMember | undefined;
   /** Whole-group MTSS, which owns the room while it runs. */
   mtssBusy: Map<Day, Busy[]>;
   caps: Map<string, { day: number; week: number }>;
@@ -282,7 +276,8 @@ function buildState(
     staffWeekMinutes: new Map(),
     studentBusy: new Map(),
     slcRoomBusy: new Map(DAYS.map((day) => [day, [] as Busy[]])),
-    slcTeaching: new Map(DAYS.map((day) => [day, [] as Busy[]])),
+    paraPullOut: new Map(DAYS.map((day) => [day, [] as Busy[]])),
+    slc: staff.find(isSlcTeacher),
     mtssBusy: new Map(DAYS.map((day) => [day, [] as Busy[]])),
     caps: new Map(),
     byName: new Map(),
@@ -328,6 +323,30 @@ interface Slot {
   day: Day;
   start: number;
   score: number;
+}
+
+/**
+ * Is the SLC teacher in the pull-out room for this whole stretch?
+ *
+ * She is, unless she is off the clock, on her lunch or break, or pushing into a
+ * general education classroom. This is what a parapro-led group needs, and it
+ * is also the thing her own lunch has to be placed around.
+ */
+function slcPresent(
+  state: State,
+  day: Day,
+  start: number,
+  end: number,
+): boolean {
+  const slc = state.slc;
+  if (!slc) return false;
+  if (slc.startMinutes != null && start < slc.startMinutes) return false;
+  if (slc.endMinutes != null && end > slc.endMinutes) return false;
+
+  const own = state.staffBusy.get(normalizeKey(slc.name))?.get(day) ?? [];
+  return !own.some(
+    (span) => span.location !== SPED_ROOM && overlaps(span, start, end),
+  );
 }
 
 /**
@@ -411,6 +430,21 @@ function findSlot(
         continue;
       }
 
+      // The other side of the supervision rule: the SLC teacher cannot take a
+      // push-in that would walk her out of the room while a parapro is
+      // instructing in it.
+      if (
+        entry.location !== SPED_ROOM &&
+        state.slc &&
+        key === normalizeKey(state.slc.name) &&
+        (state.paraPullOut.get(window.day) ?? []).some((span) =>
+          overlaps(span, start, end),
+        )
+      ) {
+        record(failures, group.id, "Parapro needs the SLC teacher present");
+        continue;
+      }
+
       if (entry.location === SPED_ROOM) {
         // Whole-group MTSS owns the pull-out room while it runs.
         const mtss = state.mtssBusy.get(window.day) ?? [];
@@ -426,14 +460,16 @@ function findSlot(
           }
         }
 
-        // A parapro may only instruct while the SLC teacher is in the room, and
-        // "present" has to mean for the whole session, not the first minute.
-        if (parapro) {
-          const teaching = state.slcTeaching.get(window.day) ?? [];
-          if (!teaching.some((span) => contains(span, start, end))) {
-            record(failures, group.id, "Parapro needs the SLC teacher present");
-            continue;
-          }
+        // A parapro may only instruct while the SLC teacher is in the room.
+        // "Present" is not "teaching this group" or even "teaching at all" —
+        // the SLC room is where she works, so she is there for the whole day
+        // apart from her lunch, her break, and any push-in that takes her to a
+        // classroom. Requiring her to be mid-session would mean a parapro could
+        // only ever run a group inside one of hers, which is both stricter than
+        // the sheet says and the thing that leaves parapros idle.
+        if (parapro && !slcPresent(state, window.day, start, end)) {
+          record(failures, group.id, "Parapro needs the SLC teacher present");
+          continue;
         }
       }
 
@@ -509,8 +545,8 @@ function commit(
 
   if (entry.location === SPED_ROOM) {
     state.slcRoomBusy.get(slot.day)?.push(span);
-    if (isSlcTeacher(state.byName.get(key)!)) {
-      state.slcTeaching.get(slot.day)?.push(span);
+    if (isParapro(state.byName.get(key)!)) {
+      state.paraPullOut.get(slot.day)?.push(span);
     }
     if (entry.mtss) state.mtssBusy.get(slot.day)?.push(span);
   }
@@ -608,15 +644,51 @@ export function placeTeam(request: TeamPlacementRequest): TeamPlacementResult {
       const isLead = (name: string) =>
         entry.leads.some((lead) => normalizeKey(lead) === normalizeKey(name));
 
+      // A lead who still owes this group their weekly session comes first —
+      // usually because pass one could not place it.
+      const owing = entry.leads.filter(
+        (lead) => !entry.leadsMet.has(normalizeKey(lead)),
+      );
+      const rest = entry.eligible.filter(
+        (name) =>
+          !owing.some((lead) => normalizeKey(lead) === normalizeKey(name)),
+      );
+
+      /*
+       * Once the lead has taken their one session, everyone else goes ahead of
+       * them — parapros first.
+       *
+       * That session is the rule's whole demand: the lead introduces the
+       * instruction once a week, and the repeats are the reinforcement a
+       * parapro is there to give. Letting the lead keep winning the remaining
+       * sessions is what starved the parapros, because the lead can be placed
+       * anywhere while a parapro can only fit inside a session the lead is
+       * already running. So this is a strict preference order, not a contest of
+       * scores — the first person who can take it, takes it.
+       */
+      // Among parapros who could all take it, the one whose preferred grade
+      // matches goes first, then whoever is least booked so far. Without the
+      // second test the first name on the Minutes row takes everything and the
+      // others stand idle — which also costs sessions, because one busy parapro
+      // cannot be in two groups at once while three free ones look on.
+      const paras = rest.filter(isPara).sort((a, b) => {
+        const gradeFit = (name: string) => {
+          const member = state.byName.get(normalizeKey(name));
+          const grades = member ? preferredGrades(member) : null;
+          if (!grades || !entry.grades.length) return 0;
+          return entry.grades.every((grade) => grades.includes(grade)) ? 1 : 0;
+        };
+        const booked = (name: string) =>
+          state.staffWeekMinutes.get(normalizeKey(name)) ?? 0;
+        return gradeFit(b) - gradeFit(a) || booked(a) - booked(b);
+      });
+
       const candidates = [
-        ...entry.leads,
-        ...entry.eligible.filter((name) => !isLead(name)),
+        ...owing,
+        ...paras,
+        ...rest.filter((name) => !isPara(name)),
       ];
 
-      // Every candidate is tried and the best time wins, rather than the first
-      // person who happens to be free. Ties go to a parapro: the certified
-      // staff's hours are the scarce thing, and a parapro-led session can only
-      // exist alongside one of theirs anyway.
       let chosen: { name: string; slot: Slot } | null = null;
       for (const name of candidates) {
         const slot = findSlot(
@@ -627,15 +699,9 @@ export function placeTeam(request: TeamPlacementRequest): TeamPlacementResult {
           settings,
           failures,
         );
-        if (!slot) continue;
-        if (
-          !chosen ||
-          slot.score > chosen.slot.score ||
-          (slot.score === chosen.slot.score &&
-            isPara(name) &&
-            !isPara(chosen.name))
-        ) {
+        if (slot) {
           chosen = { name, slot };
+          break;
         }
       }
 

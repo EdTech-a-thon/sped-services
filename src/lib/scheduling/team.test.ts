@@ -204,20 +204,10 @@ describe("parapro supervision", () => {
     expect(paraPullOut.length).toBeGreaterThan(0);
   });
 
-  test("every parapro pull-out sits inside an SLC teacher session", () => {
-    const teaching = ledBy(slc.name).filter(
-      (placement) => placement.location === SPED_ROOM,
-    );
+  test("every parapro pull-out happens inside the SLC teacher's hours", () => {
     for (const placement of paraPullOut) {
-      const supervised = teaching.some(
-        (session) =>
-          session.day === placement.day &&
-          session.start <= placement.start &&
-          session.end >= placement.end,
-      );
-      expect({ ...describePlacement(placement), supervised }).toMatchObject({
-        supervised: true,
-      });
+      expect(placement.start).toBeGreaterThanOrEqual(slc.startMinutes!);
+      expect(placement.end).toBeLessThanOrEqual(slc.endMinutes!);
     }
   });
 
@@ -233,6 +223,37 @@ describe("parapro supervision", () => {
         clash: false,
       });
     }
+  });
+
+  test("the SLC teacher is never pushing into a classroom during one", () => {
+    const elsewhere = ledBy(slc.name).filter(
+      (placement) => placement.location !== SPED_ROOM,
+    );
+    for (const placement of paraPullOut) {
+      const clash = elsewhere.some(
+        (session) =>
+          session.day === placement.day && overlaps(session, placement),
+      );
+      expect({ ...describePlacement(placement), clash }).toMatchObject({
+        clash: false,
+      });
+    }
+  });
+
+  test("the lead provider takes one session and parapros carry the repeats", () => {
+    // A group the lead only has to attend once should not have the lead on
+    // every session while parapros who may lead it stand idle.
+    const repeats = plan.placements.filter(
+      (placement) => !placement.isLeadSession,
+    );
+    expect(repeats.length).toBeGreaterThan(0);
+
+    const paraLed = plan.placements.filter((placement) =>
+      paraKeys.has(normalizeKey(placement.staff)),
+    );
+    // Every parapro on the Staff sheet is actually used.
+    const working = new Set(paraLed.map((p) => normalizeKey(p.staff)));
+    expect(working.size).toBe(paraKeys.size);
   });
 });
 

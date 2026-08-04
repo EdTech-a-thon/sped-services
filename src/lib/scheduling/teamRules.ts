@@ -107,7 +107,7 @@ export const TEAM_RULES: TeamRule[] = [
     setting: null,
     enforcement: "hard",
     detail:
-      "A parapro-led pull-out session is only placed at a time the SLC teacher is also running a session in the SLC room.",
+      "A parapro only leads a pull-out group while the SLC teacher is in the room — within her hours, and not on her lunch, her break, or a push-in that takes her to a classroom.",
   },
   {
     id: "para-no-new-sdi",

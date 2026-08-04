@@ -235,10 +235,11 @@
   <p class="mt-2 max-w-3xl text-slate-600">
     Schedules every member of staff against every other one — the SLC teacher,
     the co-teachers and the parapros — and places their lunches and breaks too.
-    A parapro only leads a pull-out group while the SLC teacher is in the room,
-    and each prescription's named lead provider takes one session of it
-    personally every week. Nothing here reduces a student's prescribed minutes;
-    whatever will not fit is reported instead.
+    Each prescription's named lead provider takes one session of it personally
+    every week; the repeats go to a parapro wherever the sheet allows it, and a
+    parapro only leads while the SLC teacher is in the room. Nothing here
+    reduces a student's prescribed minutes; whatever will not fit is reported
+    instead.
   </p>
 
   {#if errorMessage}

@@ -337,10 +337,16 @@ export function buildTeamPlan(
       });
     }
   }
+  const slcKey = slc ? normalizeKey(slc.name) : "";
   for (const gap of coverageGaps) {
+    const isSlcGap = normalizeKey(gap.staff) === slcKey;
     violations.push({
-      ruleId: gap.kind === "Lunch" ? "slc-lunch-cover" : "para-break-window",
-      summary: `${gap.staff} has no ${gap.kind.toLowerCase()} on ${gap.day}`,
+      ruleId: isSlcGap
+        ? gap.kind === "Lunch"
+          ? "slc-lunch-cover"
+          : "slc-break-cover"
+        : "para-break-window",
+      summary: `${gap.staff} is ${gap.minutes} minutes short of a ${gap.kind.toLowerCase()} on ${gap.day}`,
       detail: gap.reason,
     });
   }
@@ -352,10 +358,12 @@ export function buildTeamPlan(
     });
   }
 
-  // Deduplicated: the same sentence twice tells a teacher nothing.
+  // Deduplicated: the same sentence twice tells a teacher nothing. The summary
+  // is part of the key because it carries the day and the person — five days
+  // without a break must not collapse into one line.
   const seenViolations = new Set<string>();
   const uniqueViolations = violations.filter((entry) => {
-    const key = `${entry.ruleId}|${entry.detail}`;
+    const key = `${entry.ruleId}|${entry.summary}|${entry.detail}`;
     if (seenViolations.has(key)) return false;
     seenViolations.add(key);
     return true;

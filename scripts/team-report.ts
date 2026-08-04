@@ -103,7 +103,9 @@ for (const gap of plan.leadGaps) {
 
 console.log(`\n## Rule violations (${plan.violations.length})`);
 for (const violation of plan.violations) {
-  console.log(`  [${violation.ruleId}] ${violation.detail}`);
+  console.log(
+    `  [${violation.ruleId}] ${violation.summary} — ${violation.detail}`,
+  );
 }
 
 if (plan.unmodelledRules.length) {
