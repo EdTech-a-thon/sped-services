@@ -8,6 +8,18 @@ import type { GridSettings } from "./types";
 const FILE_KEY = "sped-scheduler:workbook";
 const SETTINGS_KEY = "sped-scheduler:settings";
 
+/**
+ * Which cached workbook a page wants. The availability grid and the
+ * single-provider planner share one, because they are two views of the same
+ * file; team planning is a different workbook shape, so it gets its own slot
+ * rather than replacing whatever the other pages were holding.
+ */
+export type WorkbookSlot = "default" | "team";
+
+function fileKey(slot: WorkbookSlot): string {
+  return slot === "team" ? `${FILE_KEY}:team` : FILE_KEY;
+}
+
 /** Base64 inflates by ~4/3, so stay well clear of the usual 5 MB quota. */
 const MAX_STORED_BYTES = 2_000_000;
 
@@ -34,14 +46,18 @@ function fromBase64(value: string): ArrayBuffer {
   return view.buffer;
 }
 
-export function saveWorkbook(fileName: string, bytes: ArrayBuffer): void {
+export function saveWorkbook(
+  fileName: string,
+  bytes: ArrayBuffer,
+  slot: WorkbookSlot = "default",
+): void {
   if (bytes.byteLength > MAX_STORED_BYTES) {
-    localStorage.removeItem(FILE_KEY);
+    localStorage.removeItem(fileKey(slot));
     return;
   }
   try {
     localStorage.setItem(
-      FILE_KEY,
+      fileKey(slot),
       JSON.stringify({
         fileName,
         savedAt: new Date().toISOString(),
@@ -50,13 +66,15 @@ export function saveWorkbook(fileName: string, bytes: ArrayBuffer): void {
     );
   } catch {
     // Quota or private-browsing failure: the app works fine without the cache.
-    localStorage.removeItem(FILE_KEY);
+    localStorage.removeItem(fileKey(slot));
   }
 }
 
-export function loadWorkbook(): StoredWorkbook | null {
+export function loadWorkbook(
+  slot: WorkbookSlot = "default",
+): StoredWorkbook | null {
   try {
-    const raw = localStorage.getItem(FILE_KEY);
+    const raw = localStorage.getItem(fileKey(slot));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as {
       fileName?: string;
@@ -101,6 +119,7 @@ export function loadSettings(): GridSettings | null {
 }
 
 export function clearStorage(): void {
-  localStorage.removeItem(FILE_KEY);
+  localStorage.removeItem(fileKey("default"));
+  localStorage.removeItem(fileKey("team"));
   localStorage.removeItem(SETTINGS_KEY);
 }

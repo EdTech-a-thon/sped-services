@@ -10,7 +10,10 @@
     "skipLibCheck": true,
     "sourceMap": true,
     "strict": true,
-    "moduleResolution": "bundler"
+    "moduleResolution": "bundler",
+    // `bun:test` and the Bun globals the scripts/ helpers use. SvelteKit's
+    // generated config pins `types`, so auto-discovery does not reach it.
+    "types": ["bun", "vite/client"]
   }
   // Path aliases are handled by https://svelte.dev/docs/kit/configuration#alias
   // except $lib which is handled by https://svelte.dev/docs/kit/configuration#files
